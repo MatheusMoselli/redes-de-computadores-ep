@@ -1,21 +1,20 @@
 package io.github.matheusmoselli.reliable_comunication;
+
 import java.io.*;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
 
 public class Sender {
     private static Integer CurrentSequenceNumber = 0;
     private static final List<Integer> PendingAcknowledgements = new ArrayList<>();
-    private static final List<Integer> AcknowledgedPackages = new ArrayList<>();
+    private static final Set<Integer> AcknowledgedPackages = new HashSet<>();
+    private static final int TIMEOUT_MS = 3000;
+    private static final int SLOW_DELAY_MS = TIMEOUT_MS + 2000;
     private static final Integer ReceiverPort = 9876;
     private static final InetAddress IPAddress;
-    private static final int TIMEOUT_MS = 3000;
 
     static {
         try {
@@ -27,7 +26,6 @@ public class Sender {
 
     public static void main(String[] args) throws Exception {
         DatagramSocket clientSocket = new DatagramSocket();
-        clientSocket.setSoTimeout(TIMEOUT_MS);
 
         AckListenerThread ackListener = new AckListenerThread(clientSocket);
         ackListener.start();
@@ -37,23 +35,7 @@ public class Sender {
                 UserInputDTO userInput = getUserInput();
                 if (userInput == null) continue;
 
-                switch (userInput.getTransmissionType()) {
-                    case "lenta":
-                        enviarLento(clientSocket, userInput.userMessage);
-                        break;
-                    case "perda":
-                        enviarComPerda(clientSocket, userInput.userMessage);
-                        break;
-                    case "fora de ordem":
-                        enviarForaDeOrdem(clientSocket, userInput.userMessage);
-                        break;
-                    case "duplicada":
-                        enviarDuplicado(clientSocket, userInput.userMessage);
-                        break;
-                    default:
-                        enviarNormal(clientSocket, userInput.userMessage);
-                        break;
-                }
+                enviar(clientSocket, userInput.getUserMessage(), userInput.getTransmissionType());
             }
         } finally {
             ackListener.interrupt();
@@ -61,89 +43,87 @@ public class Sender {
         }
     }
 
-    private static void enviarComPerda(DatagramSocket socket, String mensagem) throws Exception {
-        SegmentPacketDTO segPkt = CreateSegmentPackage(mensagem);
-        int id = segPkt.originalSegment.getNumeroSequencia();
+    private static void enviar(DatagramSocket socket, String mensagem, String transmissionType) throws Exception {
+        if (transmissionType.equals("fora de ordem")) {
+            enviarForaDeOrdem(socket, mensagem);
+            return;
+        }
 
-        // Registra no buffer mas NÃO envia — simula perda
-        PendingAcknowledgements.add(id);
-        System.out.println("Mensagem \"" + mensagem + "\" enviada como perda com id " + id);
+        SegmentPacketDTO segPkt = criarSegmento(mensagem);
+        SegmentoConfiavel seg = segPkt.getOriginalSegment();
+        int id = seg.getNumeroSequencia();
 
-        // Aguarda o timeout e reenvia
-        aguardarEReenviar(socket, segPkt.originalSegment, id);
-    }
+        synchronized (PendingAcknowledgements) {
+            PendingAcknowledgements.add(id);
+        }
 
-    private static void enviarLento(DatagramSocket socket, String mensagem) throws Exception {
-        SegmentPacketDTO segPkt = CreateSegmentPackage(mensagem);
-        int id = segPkt.originalSegment.getNumeroSequencia();
+        System.out.println(
+                "Mensagem \"" + mensagem + "\" enviada como " + transmissionType + " com id " + id
+        );
 
-        PendingAcknowledgements.add(id);
-        System.out.println("Mensagem \"" + mensagem + "\" enviada como lenta com id " + id);
+        switch (transmissionType) {
+            case "lenta":
+                Thread.sleep(SLOW_DELAY_MS);
+                socket.send(segPkt.getSendPacket());
+                break;
 
-        // Atraso artificial de 5 segundos (maior que o TIMEOUT_MS de 3s)
-        // O Sender vai dar timeout e reenviar antes do pacote chegar
-        Thread.sleep(TIMEOUT_MS + 1000);
-        socket.send(segPkt.sendPacket);
+            case "perda":
+                break;
 
-        aguardarEReenviar(socket, segPkt.originalSegment, id);
+            case "duplicada":
+                socket.send(segPkt.getSendPacket());
+                socket.send(segPkt.getSendPacket());
+                break;
+
+            default:
+                socket.send(segPkt.getSendPacket());
+                break;
+        }
+
+        aguardarAckComReenvio(socket, seg, id);
     }
 
     private static void enviarForaDeOrdem(DatagramSocket socket, String mensagem) throws Exception {
-        // Cria dois pacotes e inverte a ordem de envio
-        SegmentPacketDTO segPkt1 = CreateSegmentPackage(mensagem);
-        SegmentPacketDTO segPkt2 = CreateSegmentPackage(mensagem);
+        SegmentPacketDTO segPkt1 = criarSegmento(mensagem);
+        SegmentPacketDTO segPkt2 = criarSegmento(mensagem);
 
-        int id1 = segPkt1.originalSegment.getNumeroSequencia();
-        int id2 = segPkt2.originalSegment.getNumeroSequencia();
+        SegmentoConfiavel seg1 = segPkt1.getOriginalSegment();
+        SegmentoConfiavel seg2 = segPkt2.getOriginalSegment();
 
-        PendingAcknowledgements.add(id1);
-        PendingAcknowledgements.add(id2);
+        int id1 = seg1.getNumeroSequencia();
+        int id2 = seg2.getNumeroSequencia();
+
+        synchronized (PendingAcknowledgements) {
+            PendingAcknowledgements.add(id1);
+            PendingAcknowledgements.add(id2);
+        }
 
         System.out.println("Mensagem \"" + mensagem + "\" enviada como fora de ordem com id " + id1);
         System.out.println("Mensagem \"" + mensagem + "\" enviada como fora de ordem com id " + id2);
 
-        // Envia o segundo antes do primeiro (fora de ordem)
-        socket.send(segPkt2.sendPacket);
-        socket.send(segPkt1.sendPacket);
+        socket.send(segPkt2.getSendPacket());
+        socket.send(segPkt1.getSendPacket());
+
+        aguardarAckComReenvio(socket, seg1, id1);
+        aguardarAckComReenvio(socket, seg2, id2);
     }
 
-    private static void enviarDuplicado(DatagramSocket socket, String mensagem) throws Exception {
-        SegmentPacketDTO segPkt = CreateSegmentPackage(mensagem);
-        int id = segPkt.originalSegment.getNumeroSequencia();
-
-        PendingAcknowledgements.add(id);
-        System.out.println("Mensagem \"" + mensagem + "\" enviada como duplicada com id " + id);
-
-        // Envia duas vezes o mesmo pacote (mesmo id e numSeq)
-        socket.send(segPkt.sendPacket);
-        socket.send(segPkt.sendPacket);
-    }
-
-    private static void enviarNormal(DatagramSocket socket, String mensagem) throws Exception {
-        SegmentPacketDTO segPkt = CreateSegmentPackage(mensagem);
-        int id = segPkt.originalSegment.getNumeroSequencia();
-
-        PendingAcknowledgements.add(id);
-        socket.send(segPkt.sendPacket);
-        System.out.println("Mensagem \"" + mensagem + "\" enviada como normal com id " + id);
-    }
-
-    private static void aguardarEReenviar(DatagramSocket socket, SegmentoConfiavel seg, int id) throws Exception {
-        while (!AcknowledgedPackages.contains(id)) {
-            try {
-                Thread.sleep(TIMEOUT_MS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
+    private static void aguardarAckComReenvio(DatagramSocket socket, SegmentoConfiavel seg, int id) throws Exception {
+        while (true) {
+            synchronized (AcknowledgedPackages) {
+                if (AcknowledgedPackages.contains(id)) return;
             }
 
-            if (!AcknowledgedPackages.contains(id)) {
-                // Timeout: reenvia o pacote
-                System.out.println("Mensagem id " + id + " deu timeout, reenviando.");
+            Thread.sleep(TIMEOUT_MS);
 
-                SegmentPacketDTO pkt = preparePackage(seg);
-                socket.send(pkt.getSendPacket());
+            synchronized (AcknowledgedPackages) {
+                if (AcknowledgedPackages.contains(id)) return;
             }
+
+            System.out.println("Mensagem id " + id + " deu timeout, reenviando.");
+
+            SegmentPacketDTO pkt = prepararPacote(seg);
+            socket.send(pkt.getSendPacket());
         }
     }
 
@@ -154,37 +134,38 @@ public class Sender {
         System.out.println("Digite uma opção de envio entre: lenta, perda, fora de ordem, duplicada e normal");
         String transmissionType = inFromUser.readLine();
 
-        List<String> validTransmissionTypes = Collections.unmodifiableList(
+        List<String> validTypes = Collections.unmodifiableList(
                 Arrays.asList("lenta", "perda", "fora de ordem", "duplicada", "normal")
         );
 
-        if (!validTransmissionTypes.contains(transmissionType)) {
-            System.out.println("Tipo de envio inválido, encerrando programa.");
+        if (!validTypes.contains(transmissionType)) {
+            System.out.println("Tipo de envio inválido, tente novamente.");
             return null;
         }
+
         return new UserInputDTO(userMessage, transmissionType);
     }
 
-    private static SegmentPacketDTO CreateSegmentPackage(String userMessage) throws IOException {
-        SegmentoConfiavel originalSegment = new SegmentoConfiavel();
-        originalSegment.setNumeroSequencia(CurrentSequenceNumber++);
-        originalSegment.setIsAck(false);
-        originalSegment.setDados(userMessage);
-        originalSegment.setTimestampEnvio(System.currentTimeMillis());
-        originalSegment.setPorta(ReceiverPort);
-        originalSegment.setEnderecoIP(IPAddress);
+    private static SegmentPacketDTO criarSegmento(String mensagem) throws IOException {
+        SegmentoConfiavel seg = new SegmentoConfiavel();
+        seg.setNumeroSequencia(CurrentSequenceNumber++);
+        seg.setIsAck(false);
+        seg.setDados(mensagem);
+        seg.setTimestampEnvio(System.currentTimeMillis());
+        seg.setPorta(ReceiverPort);
+        seg.setEnderecoIP(IPAddress);
 
-        return preparePackage(originalSegment);
+        return prepararPacote(seg);
     }
 
-    private static SegmentPacketDTO preparePackage(SegmentoConfiavel originalSegment) throws IOException {
+    private static SegmentPacketDTO prepararPacote(SegmentoConfiavel seg) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         ObjectOutputStream oos = new ObjectOutputStream(baos);
-        oos.writeObject(originalSegment);
+        oos.writeObject(seg);
         byte[] sendData = baos.toByteArray();
 
-        DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, IPAddress, ReceiverPort);
-        return new SegmentPacketDTO(originalSegment, sendPacket);
+        DatagramPacket pkt = new DatagramPacket(sendData, sendData.length, IPAddress, ReceiverPort);
+        return new SegmentPacketDTO(seg, pkt);
     }
 
     private static class AckListenerThread extends Thread {
@@ -192,7 +173,7 @@ public class Sender {
 
         public AckListenerThread(DatagramSocket socket) {
             this.socket = socket;
-            setDaemon(true); // encerra junto com o programa principal
+            setDaemon(true);
         }
 
         @Override
@@ -204,8 +185,12 @@ public class Sender {
                     if (ack.getIsAck()) {
                         int idConfirmado = ack.getNumeroAck();
 
-                        PendingAcknowledgements.remove(idConfirmado);
-                        AcknowledgedPackages.add(idConfirmado);
+                        synchronized (PendingAcknowledgements) {
+                            PendingAcknowledgements.remove(idConfirmado);
+                        }
+                        synchronized (AcknowledgedPackages) {
+                            AcknowledgedPackages.add(idConfirmado);
+                        }
 
                         System.out.println("Mensagem id " + idConfirmado + " recebida pelo receiver.");
                     }
@@ -223,13 +208,8 @@ public class Sender {
             this.transmissionType = transmissionType;
         }
 
-        public String getUserMessage() {
-            return userMessage;
-        }
-
-        public String getTransmissionType() {
-            return transmissionType;
-        }
+        public String getUserMessage() { return userMessage; }
+        public String getTransmissionType() { return transmissionType; }
     }
 
     private static class SegmentPacketDTO {
@@ -241,12 +221,7 @@ public class Sender {
             this.sendPacket = sendPacket;
         }
 
-        public SegmentoConfiavel getOriginalSegment() {
-            return originalSegment;
-        }
-
-        public DatagramPacket getSendPacket() {
-            return sendPacket;
-        }
+        public SegmentoConfiavel getOriginalSegment() { return originalSegment; }
+        public DatagramPacket getSendPacket() { return sendPacket; }
     }
 }
