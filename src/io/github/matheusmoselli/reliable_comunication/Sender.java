@@ -117,6 +117,11 @@ public class Sender {
      * @throws Exception Exceção em caso de erro
      */
     private static void send(DatagramSocket socket, String message, String transmissionType) throws Exception {
+        // Cria o pacote original a partir da mensagem do usuário
+        SegmentPacketDTO segPkt = createSegment(message);
+        SegmentoConfiavel seg = segPkt.getOriginalSegment();
+        int id = seg.getNumeroSequencia();
+
         // Se o tipo de envio for fora de ordem, já cria o pacote que irá ser enviado antes do correto
         SegmentPacketDTO outOfOrderPkt = null;
         if (transmissionType.equals("fora de ordem")) {
@@ -128,11 +133,6 @@ public class Sender {
                     "\" enviada como fora de ordem com id " +
                     outOfOrderPkt.getOriginalSegment().getNumeroSequencia());
         }
-
-        // Cria o pacote original a partir da mensagem do usuário
-        SegmentPacketDTO segPkt = createSegment(message);
-        SegmentoConfiavel seg = segPkt.getOriginalSegment();
-        int id = seg.getNumeroSequencia();
 
         System.out.println(
                 "Mensagem \"" + message + "\" enviada como " + transmissionType + " com id " + id
@@ -397,6 +397,13 @@ public class Sender {
         // Converte os bytes em SegmentoConfiavel
         ByteArrayInputStream bais = new ByteArrayInputStream(recPkt.getData());
         ObjectInputStream ois = new ObjectInputStream(bais);
-        return  (SegmentoConfiavel) ois.readObject();
+        SegmentoConfiavel seg = (SegmentoConfiavel) ois.readObject();
+
+        // Preenche o IP e porta reais de origem a partir do DatagramPacket,
+        // garantindo que o receiver consiga responder com ACK mesmo em reenvios
+        seg.setEnderecoIP(recPkt.getAddress());
+        seg.setPorta(recPkt.getPort());
+
+        return seg;
     }
 }
