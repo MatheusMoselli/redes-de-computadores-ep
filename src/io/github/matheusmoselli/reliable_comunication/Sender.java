@@ -19,11 +19,13 @@ public class Sender {
 
     /**
      * Lista de números de sequências (Ids) cujos ACKs já foram recebidos
+     * Funcionalidades 2 e 5: Implementar o tratamento de pacotes perdidos (uso de temporizador e timeout)
      */
     private static final Set<Integer> acknowledgedPackages = new HashSet<>();
 
     /**
      * Lista de SegmentoConfiavel que foram enviados { numSeq: segmentoConfiavel }
+     * Funcionalidades 2 e 5: Implementar o tratamento de pacotes perdidos (uso de temporizador e timeout)
      */
     private static final Map<Integer, SegmentoConfiavel> sentPackages
             = Collections.synchronizedMap(new HashMap<>());
@@ -41,12 +43,12 @@ public class Sender {
     /**
      * Porta que o receiver está instanciado. Utilizada para envio de mensagens
      */
-    private static Integer ReceiverPort;
+    private static Integer receiverPort;
 
     /**
      * Endereço IP que o receiver está instanciado. Valor padrão de 127.0.0.1 (local)
      */
-    private static InetAddress IPAddress;
+    private static InetAddress ipAddress;
 
     public static void main(String[] args) throws Exception {
         // Funcionalidade 8: Captura de IP e porta via teclado (pressionar Enter usa o valor default)
@@ -98,13 +100,13 @@ public class Sender {
 
         // Se o valor inserido for vazio (ou seja, apenas o Enter foi pressionado), utilizar 127.0.0.1
         if (ipInput.isEmpty()) ipInput = "127.0.0.1";
-        IPAddress = InetAddress.getByName(ipInput);
+        ipAddress = InetAddress.getByName(ipInput);
 
         System.out.print("Digite a porta do receiver [default: 9876]: ");
 
         // Se o valor inserido for vazio (ou seja, apenas o Enter foi pressionado), utilizar 9876
         String portInput = inFromUser.readLine();
-        ReceiverPort = portInput.isEmpty() ? 9876 : Integer.parseInt(portInput);
+        receiverPort = portInput.isEmpty() ? 9876 : Integer.parseInt(portInput);
     }
 
     /**
@@ -225,8 +227,8 @@ public class Sender {
         seg.setIsAck(false);
         seg.setDados(mensagem);
         seg.setTimestampEnvio(System.currentTimeMillis());
-        seg.setPorta(ReceiverPort);
-        seg.setEnderecoIP(IPAddress);
+        seg.setPorta(receiverPort);
+        seg.setEnderecoIP(ipAddress);
 
         return prepararPacote(seg);
     }
@@ -243,7 +245,7 @@ public class Sender {
         oos.writeObject(seg);
         byte[] sendData = baos.toByteArray();
 
-        DatagramPacket pkt = new DatagramPacket(sendData, sendData.length, IPAddress, ReceiverPort);
+        DatagramPacket pkt = new DatagramPacket(sendData, sendData.length, ipAddress, receiverPort);
         return new SegmentPacketDTO(seg, pkt);
     }
 
