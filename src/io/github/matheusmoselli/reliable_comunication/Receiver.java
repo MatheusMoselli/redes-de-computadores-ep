@@ -6,14 +6,14 @@ import java.util.*;
 
 public class Receiver {
     /**
+     * Variável criada para facilitar leitura dos ‘inputs’ do usuário
+     */
+    private static final BufferedReader inFromUser = new BufferedReader(new InputStreamReader(System.in));
+
+    /**
      * Próximo número de sequência esperado
      */
     private static int nextSequenceNumber = 0;
-
-    /**
-     * Funcionalidade 8: Porta do receiver
-     */
-    private static final Integer receiverPort = 9876;
 
     /**
      * Lista de ids já recebidos
@@ -29,6 +29,13 @@ public class Receiver {
             = Collections.synchronizedMap(new HashMap<>());
 
     public static void main(String[] args) throws Exception {
+        // Funcionalidade 8: Porta do receiver
+        System.out.print("Digite a porta do receiver [default: 9876]: ");
+
+        // Se o valor inserido for vazio (ou seja, apenas o Enter foi pressionado), utilizar 9876
+        String portInput = inFromUser.readLine();
+        int receiverPort = portInput.isEmpty() ? 9876 : Integer.parseInt(portInput);
+
         // Cria o 'socket' que irá receber as mensagens e enviar os ACKs
         DatagramSocket serverSocket = new DatagramSocket(receiverPort);
 
