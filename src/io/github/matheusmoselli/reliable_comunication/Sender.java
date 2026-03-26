@@ -271,7 +271,7 @@ public class Sender {
             while (!isInterrupted()) {
                 try {
                     // Fica TRAVADO esperando o próximo ACK
-                    SegmentoConfiavel ack = receber(socket);
+                    SegmentoConfiavel ack = receivePackage(socket);
 
                     // Valida se o pacote recebido realmente é um ACK
                     if (ack.getIsAck()) {
@@ -386,7 +386,7 @@ public class Sender {
      * @throws IOException Exceção em caso de erro
      * @throws ClassNotFoundException Exceção em caso de erro
      */
-    public static SegmentoConfiavel receber(DatagramSocket socket) throws IOException, ClassNotFoundException {
+    public static SegmentoConfiavel receivePackage(DatagramSocket socket) throws IOException, ClassNotFoundException {
         // Cria o buffer para ler os bytes recebidos
         byte[] buffer = new byte[65535]; // 2^16 - Maior tamanho possível para um UDP
         DatagramPacket recPkt = new DatagramPacket(buffer, buffer.length);

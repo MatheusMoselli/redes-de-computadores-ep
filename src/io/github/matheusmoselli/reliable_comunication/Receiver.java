@@ -43,7 +43,7 @@ public class Receiver {
             // 'Loop' infinito, ou seja, fica sempre ouvindo mensagens
             while (true) {
                 // Converte os bytes recebidos em SegmentoConfiavel
-                SegmentoConfiavel segReceived = Sender.receber(serverSocket);
+                SegmentoConfiavel segReceived = Sender.receivePackage(serverSocket);
 
                 // Processa o SegmentoConfiavel
                 processSegment(segReceived, serverSocket);
